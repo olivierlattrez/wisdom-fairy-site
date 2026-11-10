@@ -1,0 +1,260 @@
+<!doctype html>
+<!--
+  Wisdom Wall: every archived tile in a grid.
+  Data comes from the "Wisdom Archive" Google Sheet (link-viewable), read as CSV in the browser.
+  The sheet ID is NOT in this file: it goes in the link after the #, e.g.  .../wall/#<SHEET_ID>
+  so the public repo never reveals where the quotes live. Deployed copy: wisdom-fairy-site/wall/index.html
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<meta name="referrer" content="no-referrer">
+<title>Wisdom Wall</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@1,600&family=Quicksand:wght@500;700&family=Pinyon+Script&display=swap" rel="stylesheet">
+<style>
+  :root { --ink: #8A1C4A; --accent: #FF5FA2; --pill: #C2185B; --card: #FFF5F9; --soft: #A0406A; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body {
+    min-height: 100vh; padding: 40px 16px 64px;
+    font-family: Quicksand, system-ui, sans-serif; color: var(--ink);
+    background-color: #FFD6E7;
+    background-image: radial-gradient(#FFB3D1 3px, transparent 3.5px);
+    background-size: 28px 28px;
+  }
+  .wrap { max-width: 1200px; margin: 0 auto; }
+  header { text-align: center; margin-bottom: 28px; }
+  .pill {
+    display: inline-flex; align-items: center; gap: 8px; margin: 0;
+    background: var(--pill); color: #fff; font-weight: 700; font-size: 13px; letter-spacing: 3px;
+    padding: 7px 16px; border-radius: 999px;
+  }
+  h1 {
+    margin: 14px 0 4px; font-family: 'Playfair Display', serif; font-style: italic; font-weight: 600;
+    font-size: clamp(40px, 7vw, 64px); line-height: 1.05;
+  }
+  .count { margin: 0; color: var(--soft); font-weight: 700; letter-spacing: 1px; }
+
+  .controls {
+    display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; align-items: center;
+    margin: 0 auto 28px; max-width: 900px;
+  }
+  .search {
+    flex: 1 1 260px; max-width: 360px; min-height: 44px; padding: 10px 18px;
+    border: 2px solid var(--accent); border-radius: 999px; background: var(--card);
+    font: inherit; color: var(--ink); outline: none;
+  }
+  .search:focus-visible { box-shadow: 0 0 0 3px #fff, 0 0 0 6px var(--pill); }
+  .search::placeholder { color: var(--soft); opacity: .8; }
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
+  .chip {
+    min-height: 40px; padding: 8px 16px; border-radius: 999px; cursor: pointer;
+    border: 2px solid var(--accent); background: var(--card); color: var(--ink);
+    font: inherit; font-weight: 700; font-size: 14px;
+  }
+  .chip[aria-pressed="true"] { background: var(--pill); border-color: var(--pill); color: #fff; }
+  .chip:focus-visible { outline: 3px solid var(--ink); outline-offset: 2px; }
+
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 24px; }
+  .tile {
+    display: block; width: 100%; padding: 0; border: 0; background: none; cursor: pointer;
+    border-radius: 22px; overflow: hidden; aspect-ratio: 1;
+    box-shadow: 6px 6px 0 var(--accent); transition: transform .15s ease, box-shadow .15s ease;
+  }
+  .tile:hover { transform: translate(-2px, -2px); box-shadow: 9px 9px 0 var(--accent); }
+  .tile:focus-visible { outline: 3px solid var(--ink); outline-offset: 4px; }
+  .tile img { display: block; width: 100%; height: 100%; object-fit: cover; background: var(--card); }
+
+  .state {
+    max-width: 520px; margin: 40px auto; padding: 32px; text-align: center;
+    background: var(--card); border: 3px solid var(--accent); border-radius: 28px; box-shadow: 8px 8px 0 var(--accent);
+  }
+  .state h2 { margin: 0 0 8px; font-family: 'Playfair Display', serif; font-style: italic; }
+  .state p { margin: 0; color: var(--soft); }
+
+  dialog {
+    width: min(560px, calc(100vw - 32px)); max-height: calc(100vh - 32px); padding: 0;
+    border: 3px solid var(--accent); border-radius: 28px; background: var(--card); color: var(--ink);
+    box-shadow: 10px 10px 0 var(--accent);
+  }
+  dialog::backdrop { background: rgba(138, 28, 74, .45); }
+  dialog img { display: block; width: 100%; aspect-ratio: 1; object-fit: cover; }
+  .meta { padding: 18px 22px 22px; display: flex; flex-direction: column; gap: 6px; }
+  .meta .quote { margin: 0; font-family: 'Playfair Display', serif; font-style: italic; font-size: 20px; line-height: 1.35; }
+  .meta .author { font-family: 'Pinyon Script', cursive; font-size: 30px; color: var(--pill); line-height: 1.1; }
+  .meta .when { font-size: 13px; font-weight: 700; letter-spacing: 1.5px; color: var(--soft); text-transform: uppercase; }
+  .meta .row { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 10px; }
+  .meta a, .close {
+    display: inline-flex; align-items: center; min-height: 44px; padding: 8px 18px; border-radius: 999px;
+    font: inherit; font-weight: 700; font-size: 14px; text-decoration: none; cursor: pointer;
+  }
+  .meta a { background: #fff; color: var(--pill); border: 2px solid var(--accent); }
+  .close { margin-left: auto; background: var(--pill); color: #fff; border: 0; }
+  .meta a:focus-visible, .close:focus-visible { outline: 3px solid var(--ink); outline-offset: 2px; }
+  @media (prefers-reduced-motion: reduce) { .tile { transition: none; } .tile:hover { transform: none; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <p class="pill"><span aria-hidden="true">✦</span> WISDOM WALL <span aria-hidden="true">✦</span></p>
+    <h1>All our wisdom</h1>
+    <p class="count" id="count" aria-live="polite"></p>
+  </header>
+
+  <div class="controls" id="controls" hidden>
+    <label for="search" style="position:absolute;left:-9999px">Search quotes</label>
+    <input class="search" id="search" type="search" placeholder="Search quotes…" autocomplete="off">
+    <div class="chips" id="chips" role="group" aria-label="Filter by author"></div>
+  </div>
+
+  <main id="grid" class="grid" aria-label="Wisdom tiles"></main>
+  <div id="state" class="state" hidden><h2></h2><p></p></div>
+</div>
+
+<dialog id="detail" aria-labelledby="d-quote">
+  <img id="d-img" alt="">
+  <div class="meta">
+    <p class="quote" id="d-quote"></p>
+    <div class="author" id="d-author"></div>
+    <div class="when" id="d-when"></div>
+    <div class="row">
+      <a id="d-full" target="_blank" rel="noopener">Full size</a>
+      <a id="d-slack" target="_blank" rel="noopener">↗ Original (private)</a>
+      <button class="close" id="d-close" type="button">Close</button>
+    </div>
+  </div>
+</dialog>
+
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const sheetId = decodeURIComponent(location.hash.slice(1)).trim();
+  const thumb = (id, w) => `https://drive.google.com/thumbnail?id=${encodeURIComponent(id)}&sz=w${w}`;
+  let tiles = [], author = null, query = "";
+
+  function showState(title, text) {
+    $("state").hidden = false;
+    $("state").querySelector("h2").textContent = title;
+    $("state").querySelector("p").textContent = text;
+  }
+
+  // Small RFC 4180 CSV parser (quoted fields, escaped quotes, newlines inside quotes).
+  function parseCSV(text) {
+    const rows = []; let row = [], field = "", inQ = false;
+    for (let i = 0; i < text.length; i++) {
+      const c = text[i];
+      if (inQ) {
+        if (c === '"' && text[i + 1] === '"') { field += '"'; i++; }
+        else if (c === '"') inQ = false;
+        else field += c;
+      } else if (c === '"') inQ = true;
+      else if (c === ",") { row.push(field); field = ""; }
+      else if (c === "\n" || c === "\r") {
+        if (c === "\r" && text[i + 1] === "\n") i++;
+        row.push(field); rows.push(row); row = []; field = "";
+      } else field += c;
+    }
+    if (field || row.length) { row.push(field); rows.push(row); }
+    return rows;
+  }
+
+  function prettyWhen(s) {
+    const m = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})/.exec(s || "");
+    if (!m) return s || "";
+    const months = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+    return `${+m[3]} ${months[+m[2] - 1]} ${m[1]} · ${m[4]}:${m[5]}`;
+  }
+
+  function render() {
+    const q = query.toLowerCase();
+    const shown = tiles.filter(t =>
+      (!author || t.author === author) &&
+      (!q || t.quote.toLowerCase().includes(q) || t.author.toLowerCase().includes(q)));
+    const grid = $("grid");
+    grid.replaceChildren(...shown.map(t => {
+      const b = document.createElement("button");
+      b.className = "tile"; b.type = "button";
+      b.setAttribute("aria-label", `“${t.quote}” by ${t.author}`);
+      const img = document.createElement("img");
+      img.src = thumb(t.fileId, 600); img.alt = ""; img.loading = "lazy"; img.referrerPolicy = "no-referrer";
+      b.append(img);
+      b.addEventListener("click", () => open(t));
+      return b;
+    }));
+    const n = tiles.length;
+    $("count").textContent = shown.length === n
+      ? `${n} ${n === 1 ? "tile" : "tiles"} of team brilliance`
+      : `${shown.length} of ${n} tiles`;
+    $("state").hidden = shown.length > 0 || n === 0;
+    if (!shown.length && n) showState("Nothing here", "No tiles match that filter.");
+  }
+
+  function buildChips() {
+    const counts = {};
+    tiles.forEach(t => counts[t.author] = (counts[t.author] || 0) + 1);
+    const names = Object.keys(counts).sort((a, b) => counts[b] - counts[a] || a.localeCompare(b));
+    const make = (label, value) => {
+      const b = document.createElement("button");
+      b.className = "chip"; b.type = "button"; b.textContent = label;
+      b.setAttribute("aria-pressed", String(author === value));
+      b.addEventListener("click", () => {
+        author = value;
+        document.querySelectorAll(".chip").forEach(c => c.setAttribute("aria-pressed", String(c === b)));
+        render();
+      });
+      return b;
+    };
+    $("chips").replaceChildren(make("Everyone", null), ...names.map(n => make(`${n} · ${counts[n]}`, n)));
+  }
+
+  function open(t) {
+    $("d-img").src = thumb(t.fileId, 1080);
+    $("d-img").alt = `Wisdom tile: “${t.quote}” by ${t.author}`;
+    $("d-quote").textContent = `“${t.quote}”`;
+    $("d-author").textContent = t.author;
+    $("d-when").textContent = prettyWhen(t.saidAt);
+    $("d-full").href = `https://drive.google.com/file/d/${encodeURIComponent(t.fileId)}/view`;
+    $("d-slack").hidden = !t.slack;
+    if (t.slack) $("d-slack").href = t.slack;
+    $("detail").showModal();
+  }
+  $("d-close").addEventListener("click", () => $("detail").close());
+  $("detail").addEventListener("click", (e) => { if (e.target === $("detail")) $("detail").close(); });
+  $("search").addEventListener("input", (e) => { query = e.target.value.trim(); render(); });
+
+  async function load() {
+    if (!/^[A-Za-z0-9_-]{20,}$/.test(sheetId)) {
+      showState("This wall needs its secret link", "Ask whoever shared the wall for the full link (it includes a # part).");
+      return;
+    }
+    try {
+      const url = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:csv&sheet=Tiles`;
+      const res = await fetch(url, { cache: "no-store", referrerPolicy: "no-referrer" });
+      if (!res.ok) throw new Error(res.status);
+      const rows = parseCSV(await res.text());
+      const head = rows.shift().map(h => h.trim());
+      const col = (name) => head.indexOf(name);
+      const ix = { quote: col("Quote"), author: col("Author"), saidAt: col("Said at"), slack: col("Slack link"), fileId: col("Drive file ID") };
+      if (ix.quote < 0 || ix.fileId < 0) throw new Error("unexpected sheet layout");
+      tiles = rows
+        .map(r => ({ quote: r[ix.quote] || "", author: r[ix.author] || "Someone", saidAt: r[ix.saidAt] || "",
+                     slack: (r[ix.slack] || "").startsWith("https://") ? r[ix.slack] : "", fileId: (r[ix.fileId] || "").trim() }))
+        .filter(t => t.fileId && t.quote)
+        .sort((a, b) => b.saidAt.localeCompare(a.saidAt));
+      if (!tiles.length) { $("count").textContent = ""; showState("No wisdom yet", "Share a message with Make it wisdom ✨ and it shows up here."); return; }
+      $("controls").hidden = false;
+      buildChips(); render();
+    } catch (e) {
+      showState("Couldn't load the wall", "Check the link, or try again in a moment.");
+    }
+  }
+  load();
+  window.addEventListener("hashchange", () => location.reload());
+})();
+</script>
+</body>
+</html>
