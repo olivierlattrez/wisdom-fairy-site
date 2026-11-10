@@ -67,6 +67,13 @@
   }
   .tile:hover { transform: translate(-2px, -2px); box-shadow: 9px 9px 0 var(--accent); }
   .tile:focus-visible { outline: 3px solid var(--ink); outline-offset: 4px; }
+  .tile { position: relative; }
+  .badge {
+    position: absolute; top: 10px; right: 10px; padding: 5px 11px; border-radius: 999px;
+    background: var(--pill); color: #fff; font-weight: 700; font-size: 14px; box-shadow: 2px 2px 0 var(--ink);
+  }
+  .sort { display: flex; gap: 8px; justify-content: center; }
+  .meta .score { font-weight: 700; color: var(--pill); }
   .tile img { display: block; width: 100%; height: 100%; object-fit: cover; background: var(--card); }
 
   .state {
@@ -110,6 +117,10 @@
     <label for="search" style="position:absolute;left:-9999px">Search quotes</label>
     <input class="search" id="search" type="search" placeholder="Search quotes…" autocomplete="off">
     <div class="chips" id="chips" role="group" aria-label="Filter by author"></div>
+    <div class="sort" role="group" aria-label="Sort">
+      <button class="chip" type="button" data-sort="new" aria-pressed="true">Newest</button>
+      <button class="chip" type="button" data-sort="top" aria-pressed="false">⭐ Top rated</button>
+    </div>
   </div>
 
   <main id="grid" class="grid" aria-label="Wisdom tiles"></main>
@@ -122,6 +133,7 @@
     <p class="quote" id="d-quote"></p>
     <div class="author" id="d-author"></div>
     <div class="when" id="d-when"></div>
+    <div class="score" id="d-score"></div>
     <div class="row">
       <a id="d-full" target="_blank" rel="noopener">Full size</a>
       <a id="d-slack" target="_blank" rel="noopener">↗ Original (private)</a>
@@ -135,7 +147,8 @@
   const $ = (id) => document.getElementById(id);
   const sheetId = decodeURIComponent(location.hash.slice(1)).trim();
   const thumb = (id, w) => `https://drive.google.com/thumbnail?id=${encodeURIComponent(id)}&sz=w${w}`;
-  let tiles = [], author = null, query = "";
+  let tiles = [], author = null, query = "", sortBy = "new";
+  const avgText = (a) => (Math.round(a * 10) / 10).toString();
 
   function showState(title, text) {
     $("state").hidden = false;
@@ -175,14 +188,21 @@
     const shown = tiles.filter(t =>
       (!author || t.author === author) &&
       (!q || t.quote.toLowerCase().includes(q) || t.author.toLowerCase().includes(q)));
+    if (sortBy === "top") shown.sort((a, b) => (b.avg ?? -1) - (a.avg ?? -1) || b.saidAt.localeCompare(a.saidAt));
     const grid = $("grid");
     grid.replaceChildren(...shown.map(t => {
       const b = document.createElement("button");
       b.className = "tile"; b.type = "button";
-      b.setAttribute("aria-label", `“${t.quote}” by ${t.author}`);
+      b.setAttribute("aria-label", `“${t.quote}” by ${t.author}` + (t.avg != null ? `, scored ${avgText(t.avg)} out of 10` : ""));
       const img = document.createElement("img");
       img.src = thumb(t.fileId, 600); img.alt = ""; img.loading = "lazy"; img.referrerPolicy = "no-referrer";
       b.append(img);
+      if (t.avg != null) {
+        const badge = document.createElement("span");
+        badge.className = "badge"; badge.setAttribute("aria-hidden", "true");
+        badge.textContent = `★ ${avgText(t.avg)}`;
+        b.append(badge);
+      }
       b.addEventListener("click", () => open(t));
       return b;
     }));
@@ -218,6 +238,8 @@
     $("d-quote").textContent = `“${t.quote}”`;
     $("d-author").textContent = t.author;
     $("d-when").textContent = prettyWhen(t.saidAt);
+    $("d-score").textContent = t.avg == null ? "Not scored yet"
+      : `★ ${avgText(t.avg)}/10 · ` + t.votes.map(v => `${v.name} ${v.score}`).join(" · ");
     $("d-full").href = `https://drive.google.com/file/d/${encodeURIComponent(t.fileId)}/view`;
     $("d-slack").hidden = !t.slack;
     if (t.slack) $("d-slack").href = t.slack;
@@ -226,6 +248,31 @@
   $("d-close").addEventListener("click", () => $("detail").close());
   $("detail").addEventListener("click", (e) => { if (e.target === $("detail")) $("detail").close(); });
   $("search").addEventListener("input", (e) => { query = e.target.value.trim(); render(); });
+  document.querySelectorAll("[data-sort]").forEach(b => b.addEventListener("click", () => {
+    sortBy = b.dataset.sort;
+    document.querySelectorAll("[data-sort]").forEach(x => x.setAttribute("aria-pressed", String(x === b)));
+    render();
+  }));
+
+  // Scores live in the "Scores" tab: one row per person per tile (0–10). Missing tab = no scores yet.
+  async function loadScores() {
+    try {
+      const res = await fetch(`https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:csv&sheet=Scores`,
+                              { cache: "no-store", referrerPolicy: "no-referrer" });
+      if (!res.ok) return {};
+      const rows = parseCSV(await res.text());
+      const head = (rows.shift() || []).map(h => h.trim());
+      const [f, n, sc] = ["Drive file ID", "Name", "Score"].map(h => head.indexOf(h));
+      if (f < 0 || sc < 0) return {};  // gviz falls back to the first tab when "Scores" doesn't exist
+      const by = {};
+      rows.forEach(r => {
+        const v = Number(r[sc]);
+        if (!r[f] || r[sc] === "" || !(v >= 0 && v <= 10)) return;
+        (by[r[f].trim()] ||= []).push({ name: (r[n] || "Someone").trim(), score: v });
+      });
+      return by;
+    } catch { return {}; }
+  }
 
   // No duplicates: same Slack message, or same words by the same person (ignoring case,
   // punctuation, spacing and emoji). The first one shared wins. Mirrors quote_key() in storage.py.
@@ -247,7 +294,8 @@
       const url = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:csv&sheet=Tiles`;
       const res = await fetch(url, { cache: "no-store", referrerPolicy: "no-referrer" });
       if (!res.ok) throw new Error(res.status);
-      const rows = parseCSV(await res.text());
+      const [csv, scores] = await Promise.all([res.text(), loadScores()]);
+      const rows = parseCSV(csv);
       const head = rows.shift().map(h => h.trim());
       const col = (name) => head.indexOf(name);
       const ix = { quote: col("Quote"), author: col("Author"), saidAt: col("Said at"), slack: col("Slack link"), fileId: col("Drive file ID") };
@@ -257,6 +305,10 @@
                      slack: (r[ix.slack] || "").startsWith("https://") ? r[ix.slack] : "", fileId: (r[ix.fileId] || "").trim() }))
         .filter(t => t.fileId && t.quote)
         .filter(isFirstOfItsKind)
+        .map(t => {
+          const votes = (scores[t.fileId] || []).sort((a, b) => a.name.localeCompare(b.name));
+          return { ...t, votes, avg: votes.length ? votes.reduce((s, v) => s + v.score, 0) / votes.length : null };
+        })
         .sort((a, b) => b.saidAt.localeCompare(a.saidAt));
       if (!tiles.length) { $("count").textContent = ""; showState("No wisdom yet", "Share a message with Make it wisdom ✨ and it shows up here."); return; }
       $("controls").hidden = false;
