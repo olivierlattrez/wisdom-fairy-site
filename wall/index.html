@@ -227,6 +227,17 @@
   $("detail").addEventListener("click", (e) => { if (e.target === $("detail")) $("detail").close(); });
   $("search").addEventListener("input", (e) => { query = e.target.value.trim(); render(); });
 
+  // No duplicates: same Slack message, or same words by the same person (ignoring case,
+  // punctuation, spacing and emoji). The first one shared wins. Mirrors quote_key() in storage.py.
+  const norm = (s) => s.normalize("NFKC").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+  const seen = new Set();
+  function isFirstOfItsKind(t) {
+    const keys = [`${norm(t.author)}|${norm(t.quote)}`].concat(t.slack ? [t.slack] : []);
+    if (keys.some(k => seen.has(k))) return false;
+    keys.forEach(k => seen.add(k));
+    return true;
+  }
+
   async function load() {
     if (!/^[A-Za-z0-9_-]{20,}$/.test(sheetId)) {
       showState("This wall needs its secret link", "Ask whoever shared the wall for the full link (it includes a # part).");
@@ -245,6 +256,7 @@
         .map(r => ({ quote: r[ix.quote] || "", author: r[ix.author] || "Someone", saidAt: r[ix.saidAt] || "",
                      slack: (r[ix.slack] || "").startsWith("https://") ? r[ix.slack] : "", fileId: (r[ix.fileId] || "").trim() }))
         .filter(t => t.fileId && t.quote)
+        .filter(isFirstOfItsKind)
         .sort((a, b) => b.saidAt.localeCompare(a.saidAt));
       if (!tiles.length) { $("count").textContent = ""; showState("No wisdom yet", "Share a message with Make it wisdom ✨ and it shows up here."); return; }
       $("controls").hidden = false;
